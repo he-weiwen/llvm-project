@@ -14,17 +14,21 @@
 #ifndef LLVM_CLANG_ANALYSIS_ANALYSES_LIFETIMESAFETY_FACTS_H
 #define LLVM_CLANG_ANALYSIS_ANALYSES_LIFETIMESAFETY_FACTS_H
 
+#include <cstdint>
+#include <optional>
+
 #include "clang/Analysis/Analyses/LifetimeSafety/Loans.h"
 #include "clang/Analysis/Analyses/LifetimeSafety/Origins.h"
 #include "clang/Analysis/Analyses/LifetimeSafety/Utils.h"
 #include "clang/Analysis/AnalysisDeclContext.h"
 #include "clang/Analysis/CFG.h"
-#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
-#include <cstdint>
+#include "llvm/Support/raw_ostream.h"
 
 namespace clang::lifetimes::internal {
+
+class LoanPropagationAnalysis;
 
 using FactID = utils::ID<struct FactTag>;
 
@@ -76,7 +80,8 @@ public:
   }
 
   virtual void dump(llvm::raw_ostream &OS, const LoanManager &,
-                    const OriginManager &) const;
+                    const OriginManager &,
+                    const LoanPropagationAnalysis *LPA = nullptr) const;
 };
 
 /// A `ProgramPoint` identifies a location in the CFG by pointing to a specific
@@ -97,24 +102,25 @@ public:
   LoanID getLoanID() const { return LID; }
   OriginID getOriginID() const { return OID; }
   void dump(llvm::raw_ostream &OS, const LoanManager &LM,
-            const OriginManager &OM) const override;
+            const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 class ExpireFact : public Fact {
-  LoanID LID;
+  AccessPath AP;
   SourceLocation ExpiryLoc;
 
 public:
   static bool classof(const Fact *F) { return F->getKind() == Kind::Expire; }
 
-  ExpireFact(LoanID LID, SourceLocation ExpiryLoc)
-      : Fact(Kind::Expire), LID(LID), ExpiryLoc(ExpiryLoc) {}
+  ExpireFact(AccessPath AP, SourceLocation ExpiryLoc)
+      : Fact(Kind::Expire), AP(AP), ExpiryLoc(ExpiryLoc) {}
 
-  LoanID getLoanID() const { return LID; }
+  const AccessPath &getAccessPath() const { return AP; }
   SourceLocation getExpiryLoc() const { return ExpiryLoc; }
 
-  void dump(llvm::raw_ostream &OS, const LoanManager &LM,
-            const OriginManager &) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &LM, const OriginManager &,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 class OriginFlowFact : public Fact {
@@ -123,22 +129,27 @@ class OriginFlowFact : public Fact {
   // True if the destination origin should be killed (i.e., its current loans
   // cleared) before the source origin's loans are flowed into it.
   bool KillDest;
+  // If set, the source origin's loans are extended by this path element before
+  // flowing into the destination.
+  std::optional<PathElement> Element;
 
 public:
   static bool classof(const Fact *F) {
     return F->getKind() == Kind::OriginFlow;
   }
 
-  OriginFlowFact(OriginID OIDDest, OriginID OIDSrc, bool KillDest)
+  OriginFlowFact(OriginID OIDDest, OriginID OIDSrc, bool KillDest,
+                 std::optional<PathElement> Element = std::nullopt)
       : Fact(Kind::OriginFlow), OIDDest(OIDDest), OIDSrc(OIDSrc),
-        KillDest(KillDest) {}
+        KillDest(KillDest), Element(Element) {}
 
   OriginID getDestOriginID() const { return OIDDest; }
   OriginID getSrcOriginID() const { return OIDSrc; }
   bool getKillDest() const { return KillDest; }
+  std::optional<PathElement> getPathElement() const { return Element; }
 
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &OM) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 /// Represents that an origin escapes the current scope through various means.
@@ -178,8 +189,8 @@ public:
                EscapeKind::Return;
   }
   const Expr *getReturnExpr() const { return ReturnExpr; };
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &OM) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 /// Represents that an origin escapes via assignment to a field.
@@ -198,8 +209,8 @@ public:
                EscapeKind::Field;
   }
   const FieldDecl *getFieldDecl() const { return FDecl; };
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &OM) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 class UseFact : public Fact {
@@ -220,8 +231,8 @@ public:
   void markAsWritten() { IsWritten = true; }
   bool isWritten() const { return IsWritten; }
 
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &OM) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 /// Represents that an origin's storage has been invalidated by a container
@@ -243,8 +254,8 @@ public:
 
   OriginID getInvalidatedOrigin() const { return OID; }
   const Expr *getInvalidationExpr() const { return InvalidationExpr; }
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &OM) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 /// Top-level origin of the expression which was found to be moved, e.g, when
@@ -264,8 +275,8 @@ public:
   OriginID getMovedOrigin() const { return MovedOrigin; }
   const Expr *getMoveExpr() const { return MoveExpr; }
 
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &OM) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &OM,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 /// A dummy-fact used to mark a specific point in the code for testing.
@@ -281,8 +292,8 @@ public:
 
   StringRef getAnnotation() const { return Annotation; }
 
-  void dump(llvm::raw_ostream &OS, const LoanManager &,
-            const OriginManager &) const override;
+  void dump(llvm::raw_ostream &OS, const LoanManager &, const OriginManager &,
+            const LoanPropagationAnalysis *LPA = nullptr) const override;
 };
 
 class FactManager {
@@ -309,7 +320,8 @@ public:
     return Res;
   }
 
-  void dump(const CFG &Cfg, AnalysisDeclContext &AC) const;
+  void dump(const CFG &Cfg, AnalysisDeclContext &AC,
+            const LoanPropagationAnalysis *LPA = nullptr) const;
 
   /// Retrieves program points that were specially marked in the source code
   /// for testing.
