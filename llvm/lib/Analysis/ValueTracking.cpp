@@ -7799,6 +7799,43 @@ static bool isGuaranteedNotToBeUndefOrPoison(
       isa<Function>(StrippedV) || isa<ConstantPointerNull>(StrippedV))
     return true;
 
+  // A single-index inbounds GEP into a known-size allocation cannot produce
+  // poison if the constant byte offset is non-negative and within the allocated
+  // range. We restrict to single-index to avoid reasoning about per-step
+  // inbounds violations in multi-index GEPs. This extends the zero-offset case
+  // above.
+  if (auto *GEP = dyn_cast<GEPOperator>(V);
+      GEP && GEP->isInBounds() && GEP->getNumIndices() == 1) {
+    auto *Base =
+        GEP->getPointerOperand()->stripPointerCastsSameRepresentation();
+    auto *CI = dyn_cast<ConstantInt>(*GEP->idx_begin());
+    const DataLayout *DL = nullptr;
+    if (auto *AI = dyn_cast<AllocaInst>(Base))
+      DL = &AI->getDataLayout();
+    else if (auto *GV = dyn_cast<GlobalVariable>(Base))
+      DL = &GV->getDataLayout();
+    if (DL && CI) {
+      unsigned IdxWidth = DL->getIndexTypeSizeInBits(V->getType());
+      APInt Idx = CI->getValue();
+      bool TruncChangesSign =
+          Idx.getBitWidth() > IdxWidth && !Idx.isSignedIntN(IdxWidth);
+      TypeSize ElemSizeTS = DL->getTypeAllocSize(GEP->getSourceElementType());
+      if (!TruncChangesSign && !ElemSizeTS.isScalable()) {
+        Idx = Idx.sextOrTrunc(IdxWidth);
+        APInt ElemSize(IdxWidth, ElemSizeTS.getKnownMinValue());
+        bool Overflow = false;
+        APInt Offset = Idx.smul_ov(ElemSize, Overflow);
+        if (!Overflow && Offset.isNonNegative()) {
+          bool CanBeNull, CanBeFreed;
+          uint64_t DerefBytes =
+              Base->getPointerDereferenceableBytes(*DL, CanBeNull, CanBeFreed);
+          if (DerefBytes != 0 && Offset.ule(DerefBytes))
+            return true;
+        }
+      }
+    }
+  }
+
   auto OpCheck = [&](const Value *V) {
     return isGuaranteedNotToBeUndefOrPoison(V, AC, CtxI, DT, Depth + 1, Kind);
   };
