@@ -1468,6 +1468,8 @@ std::optional<APInt> Vectorizer::getConstantOffsetComplexAddrs(
     return std::nullopt;
 
   uint64_t Stride = GTIA.getSequentialElementStride(DL);
+  if (Stride != GTIB.getSequentialElementStride(DL))
+    return std::nullopt;
 
   // Only look through a ZExt/SExt.
   if (!isa<SExtInst>(OpA) && !isa<ZExtInst>(OpA))
