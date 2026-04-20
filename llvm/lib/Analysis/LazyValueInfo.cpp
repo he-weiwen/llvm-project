@@ -1316,8 +1316,9 @@ LazyValueInfoImpl::getValueFromSimpleICmpCondition(CmpInst::Predicate Pred,
                                                    bool UseBlockValue) {
   ConstantRange RHSRange(RHS->getType()->getScalarSizeInBits(),
                          /*isFullSet=*/true);
-  if (ConstantInt *CI = dyn_cast<ConstantInt>(RHS)) {
-    RHSRange = ConstantRange(CI->getValue());
+  const APInt *C;
+  if (match(RHS, m_APInt(C))) {
+    RHSRange = ConstantRange(*C);
   } else if (UseBlockValue) {
     std::optional<ValueLatticeElement> R =
         getBlockValue(RHS, CxtI->getParent(), CxtI);
@@ -1391,7 +1392,7 @@ std::optional<ValueLatticeElement> LazyValueInfoImpl::getValueFromICmpCondition(
   }
 
   Type *Ty = Val->getType();
-  if (!Ty->isIntegerTy())
+  if (!Ty->isIntOrIntVectorTy())
     return ValueLatticeElement::getOverdefined();
 
   unsigned BitWidth = Ty->getScalarSizeInBits();
@@ -1404,6 +1405,9 @@ std::optional<ValueLatticeElement> LazyValueInfoImpl::getValueFromICmpCondition(
   if (matchICmpOperand(Offset, RHS, Val, SwappedPred))
     return getValueFromSimpleICmpCondition(SwappedPred, LHS, Offset, ICI,
                                            UseBlockValue);
+
+  if (!Ty->isIntegerTy())
+    return ValueLatticeElement::getOverdefined();
 
   if (match(LHS, m_Intrinsic<Intrinsic::ctpop>(m_Specific(Val))))
     return getValueFromICmpCtpop(EdgePred, RHS);

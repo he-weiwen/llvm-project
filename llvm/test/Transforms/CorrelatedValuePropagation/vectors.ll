@@ -363,3 +363,31 @@ define <2 x i16> @insertelement_constexpr() {
   %ins = insertelement <2 x i16> poison, i16 ptrtoint (ptr @g to i16), i32 0
   ret <2 x i16> %ins
 }
+
+define <16 x i16> @select_and_mask(<16 x i16> noundef %x) {
+; CHECK-LABEL: define range(i16 0, 25) <16 x i16> @select_and_mask(
+; CHECK-SAME: <16 x i16> noundef [[X:%.*]]) {
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult <16 x i16> [[X]], splat (i16 8)
+; CHECK-NEXT:    [[SEL:%.*]] = select <16 x i1> [[CMP]], <16 x i16> [[X]], <16 x i16> splat (i16 24)
+; CHECK-NEXT:    ret <16 x i16> [[SEL]]
+;
+  %and = and <16 x i16> %x, splat (i16 7)
+  %cmp = icmp ult <16 x i16> %x, splat (i16 8)
+  %sel = select <16 x i1> %cmp, <16 x i16> %and, <16 x i16> splat (i16 24)
+  ret <16 x i16> %sel
+}
+
+define <4 x i16> @select_and_mask_non_splat(<4 x i16> noundef %x) {
+; CHECK-LABEL: define range(i16 0, 25) <4 x i16> @select_and_mask_non_splat(
+; CHECK-SAME: <4 x i16> noundef [[X:%.*]]) {
+; CHECK-NEXT:    [[AND:%.*]] = and <4 x i16> [[X]], splat (i16 7)
+; CHECK-NEXT:    [[CMP:%.*]] = icmp ult <4 x i16> [[X]], <i16 8, i16 9, i16 10, i16 11>
+; CHECK-NEXT:    [[SEL:%.*]] = select <4 x i1> [[CMP]], <4 x i16> [[AND]], <4 x i16> splat (i16 24)
+; CHECK-NEXT:    ret <4 x i16> [[SEL]]
+;
+  %and = and <4 x i16> %x, splat (i16 7)
+  %cmp = icmp ult <4 x i16> %x, <i16 8, i16 9, i16 10, i16 11>
+  %sel = select <4 x i1> %cmp, <4 x i16> %and, <4 x i16> splat (i16 24)
+  ret <4 x i16> %sel
+}
+
